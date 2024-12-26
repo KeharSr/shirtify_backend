@@ -3,6 +3,7 @@ const database = require("./database/database");
 const dotenv = require("dotenv");
 const cors = require('cors')
 const { options } = require('./routes/userRoutes');
+const fileUpload = require("express-fileupload");
 const app = express();
 
 
@@ -11,6 +12,8 @@ const corsOptions ={
   credentials : true,
   optionSuccessStatus : 200
 }
+
+app.use(fileUpload());
 
 app.use(express.json())
 
@@ -30,7 +33,8 @@ app.listen(PORT, () => {
 });
 
 
-app.use('/api/user', require('./routes/userRoutes'));
+app.use('/api/user', require('./routes/userRoutes'))
+app.use('/api/product', require('./routes/productRoutes'))
 
 
 
