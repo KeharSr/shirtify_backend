@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const {
   initializeKhaltiPayment,
   verifyKhaltiPayment,
@@ -5,14 +6,25 @@ const {
 const Payment = require("../models/paymentModel");
 const OrderModel = require("../models/orderModel");
 
+// Helper function to hash sensitive data
+const hashSensitiveData = (data) => {
+  return crypto.createHash("sha256").update(data).digest("hex");
+};
+
 // Route to initialize Khalti payment gateway
 const initializePayment = async (req, res) => {
-  console.log(req.body);
-
   try {
     const { orderId, totalPrice, website_url } = req.body;
 
-    // Find the order and populate the products field
+    // Validate inputs
+    if (!orderId || !totalPrice || !website_url) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields",
+      });
+    }
+
+    // Find the order and populate carts with product details
     const itemData = await OrderModel.findOne({
       _id: orderId,
       totalPrice: Number(totalPrice),
@@ -27,67 +39,74 @@ const initializePayment = async (req, res) => {
       });
 
     if (!itemData) {
-      return res.send({
+      return res.status(404).json({
         success: false,
         message: "Order not found",
       });
     }
-    console.log(itemData.carts);
-    // Extract product names from populated products array
+
+    // Extract product names
     const productNames = itemData.carts
       .map((p) => p.productId.productName)
       .join(", ");
 
     if (!productNames) {
-      return res.send({
+      return res.status(400).json({
         success: false,
         message: "No product names found",
       });
     }
 
-    // Create a payment document without transactionId initially
+    // Create payment record
     const OrderModelData = await Payment.create({
       orderId: orderId,
       paymentGateway: "khalti",
       amount: totalPrice,
-      status: "pending", // Set the initial status to pending
+      status: "pending",
     });
 
-    // Initialize the Khalti payment
-    const paymentInitate = await initializeKhaltiPayment({
-      amount: totalPrice, // amount should be in paisa (Rs * 100)
-      purchase_order_id: OrderModelData._id, // purchase_order_id because we need to verify it later
+    // Convert amount to paisa (NPR to paisa)
+    const amountInPaisa = Math.round(totalPrice * 100);
+
+    // Call Khalti's API to initialize payment
+    const paymentResponse = await initializeKhaltiPayment({
+      amount: amountInPaisa,
+      purchase_order_id: OrderModelData._id.toString(),
       purchase_order_name: productNames,
       return_url: `${process.env.BACKEND_URI}/api/khalti/complete-khalti-payment`,
-      website_url: website_url || "http://localhost:3000",
+      website_url: website_url || "http://localhost:3000", // Replace with your public domain
     });
 
-    // Update the payment record with the transactionId and pidx
+    // Hash sensitive information
+    const hashedTransactionId = hashSensitiveData(paymentResponse.pidx);
+
+    // Update payment record with hashed pidx
     await Payment.updateOne(
       { _id: OrderModelData._id },
       {
         $set: {
-          transactionId: paymentInitate.pidx, // Assuming pidx as transactionId from Khalti response
-          pidx: paymentInitate.pidx,
+          transactionId: hashedTransactionId,
+          pidx: hashedTransactionId,
         },
       }
     );
 
-    res.json({
+    res.status(200).json({
       success: true,
       OrderModelData,
-      payment: paymentInitate,
-      pidx: paymentInitate.pidx,
+      payment: paymentResponse,
+      pidx: hashedTransactionId,
     });
   } catch (error) {
-    res.json({
+    console.error("Error initializing payment:", error);
+    res.status(500).json({
       success: false,
       error: error.message || "An error occurred",
     });
   }
 };
 
-// This is our return URL where we verify the payment done by the user
+// Route to complete Khalti payment
 const completeKhaltiPayment = async (req, res) => {
   const { pidx, amount, purchase_order_id } = req.query;
 
@@ -97,7 +116,6 @@ const completeKhaltiPayment = async (req, res) => {
     // Validate the payment info
     if (
       paymentInfo?.status !== "Completed" || // Ensure the status is "Completed"
-      paymentInfo.pidx !== pidx || // Verify pidx matches
       Number(paymentInfo.total_amount) !== Number(amount) // Compare the total amount
     ) {
       return res.status(400).json({
@@ -107,51 +125,25 @@ const completeKhaltiPayment = async (req, res) => {
       });
     }
 
-    // // Check if payment corresponds to a valid order
-    // const purchasedItemData = await OrderModel.findOne({
-    //   _id: purchase_order_id,
-    //   totalPrice: amount,
-    // });
-
-    // if (!purchasedItemData) {
-    //   return res.status(404).json({
-    //     success: false,
-    //     message: "Order data not found",
-    //   });
-    // }
-
-    // Update the order status to 'completed'
-    // await Payment.findByIdAndUpdate(
-    //   purchase_order_id,
-    //   {
-    //     $set: {
-    //       status: "completed",
-    //     },
-    //   }
-    // );
+    // Hash the received pidx
+    const hashedPidx = hashSensitiveData(pidx);
 
     // Update payment record with verification data
     const paymentData = await Payment.findOneAndUpdate(
       { _id: purchase_order_id },
       {
         $set: {
-          pidx,
-          transactionId: paymentInfo.transaction_id,
-          // dataFromVerificationReq: paymentInfo,
-          // apiQueryFromUser: req.query,
+          pidx: hashedPidx,
+          transactionId: hashSensitiveData(paymentInfo.transaction_id),
           status: "success",
         },
       },
       { new: true }
     );
-    res.redirect(`https://test-pay.khalti.com/?pidx=${pidx}`);
 
-    // // Send success response
-    // res.json({
-    //   success: true,
-    //   message: "Payment Successful",
-    //   paymentData,
-    // });
+    // Redirect to your custom success page
+    const successPageUrl = `${process.env.FRONTEND_URL}/payment-success?pidx=${hashedPidx}&orderId=${purchase_order_id}`;
+    res.redirect(successPageUrl);
   } catch (error) {
     console.error("Error verifying payment:", error);
     res.status(500).json({
@@ -162,10 +154,10 @@ const completeKhaltiPayment = async (req, res) => {
   }
 };
 
-// This is our return URL where we verify the payment done by the user
+
+// Route to verify Khalti payment (used for debugging or manual verification)
 const verifyKhalti = async (req, res) => {
   const { pidx, amount, purchase_order_id } = req.query;
-  console.log(req.query);
 
   try {
     const paymentInfo = await verifyKhaltiPayment(pidx);
@@ -173,7 +165,6 @@ const verifyKhalti = async (req, res) => {
     // Validate the payment info
     if (
       paymentInfo?.status !== "Completed" || // Ensure the status is "Completed"
-      paymentInfo.pidx !== pidx || // Verify pidx matches
       Number(paymentInfo.total_amount) !== Number(amount) // Compare the total amount
     ) {
       return res.status(400).json({
@@ -183,51 +174,26 @@ const verifyKhalti = async (req, res) => {
       });
     }
 
-    // // Check if payment corresponds to a valid order
-    // const purchasedItemData = await OrderModel.findOne({
-    //   _id: purchase_order_id,
-    //   totalPrice: amount,
-    // });
-
-    // if (!purchasedItemData) {
-    //   return res.status(404).json({
-    //     success: false,
-    //     message: "Order data not found",
-    //   });
-    // }
-
-    // Update the order status to 'completed'
-    // await Payment.findByIdAndUpdate(
-    //   purchase_order_id,
-    //   {
-    //     $set: {
-    //       status: "completed",
-    //     },
-    //   }
-    // );
+    // Hash the received pidx
+    const hashedPidx = hashSensitiveData(pidx);
 
     // Update payment record with verification data
     const paymentData = await Payment.findOneAndUpdate(
       { _id: purchase_order_id },
       {
         $set: {
-          pidx,
-          transactionId: paymentInfo.transaction_id,
-          // dataFromVerificationReq: paymentInfo,
-          // apiQueryFromUser: req.query,
+          pidx: hashedPidx,
+          transactionId: hashSensitiveData(paymentInfo.transaction_id),
           status: "success",
         },
       },
       { new: true }
     );
 
-    // Send success response
     res.json({
       success: true,
       message: "Payment Successful",
       paymentData,
-      pidx: paymentInfo.pidx,
-      transactionId: paymentInfo.transaction_id,
     });
   } catch (error) {
     console.error("Error verifying payment:", error);

@@ -10,34 +10,88 @@ const fs = require('fs');
 const {OAuth2Client} = require('google-auth-library');
 const axios = require('axios'); 
 const client=new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
-const createUser = async (req, res) => {
-  console.log(req.body);
-  const { firstName, lastName, userName, email, phoneNumber, password } =
-    req.body;
+// const createUser = async (req, res) => {
+//   console.log(req.body);
+//   const {   userName, phoneNumber, password } =
+//     req.body;
 
-  if (!firstName ||!lastName ||!userName ||!email ||!phoneNumber ||!password ) {
-    return res.status(400).json({
-      success: false,
-      message: "Please enter all details!",
-    });
-  }
+//   if (!userName ||!phoneNumber ||!password ) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "Please enter all details!",
+//     });
+//   }
 
-  try {
-    const existingUserByEmail = await userModel.findOne({ email: email });
-    const existingUserByPhone = await userModel.findOne({
-      phoneNumber: phoneNumber,
-    });
+//   try {
+//     // const existingUserByEmail = await userModel.findOne({ email: email });
+//     const existingUserByPhone = await userModel.findOne({
+//       phoneNumber: phoneNumber,
+//     });
 
     
 
 
-    if (existingUserByEmail) {
-      return res.status(400).json({
-        success: false,
-        message: "User with this email already exists!",
-      });
-    }
+//     // if (existingUserByEmail) {
+//     //   return res.status(400).json({
+//     //     success: false,
+//     //     message: "User with this email already exists!",
+//     //   });
+//     // }
 
+//     if (existingUserByPhone) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "User with this phone number already exists!",
+//       });
+//     }
+
+//     // if the password and confirm password do not match
+    
+
+//     const randomSalt = await bcrypt.genSalt(10);
+//     const hashedPassword = await bcrypt.hash(password, randomSalt);
+
+//     const newUser = new userModel({
+//       // firstName: firstName,
+//       // lastName: lastName,
+//       userName: userName,
+//       // email: email,
+//       phoneNumber: phoneNumber,
+//       password: hashedPassword,
+      
+//     });
+
+//     await newUser.save();
+
+//     res.status(201).json({
+//       success: true,
+//       message: "User created successfully",
+//     });
+//   } catch (error) {
+//     console.log(error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal Server Error!",
+//     });
+//   }
+// };
+
+const createUser = async (req, res) => {
+  console.log(req.body);
+
+  const { userName, phoneNumber, password } = req.body;
+
+  // Validate required fields (email is NOT required here)
+  if (!userName || !phoneNumber || !password) {
+    return res.status(400).json({
+      success: false,
+      message: "Please enter all required details!",
+    });
+  }
+
+  try {
+    // Check if phone number already exists
+    const existingUserByPhone = await userModel.findOne({ phoneNumber });
     if (existingUserByPhone) {
       return res.status(400).json({
         success: false,
@@ -45,20 +99,13 @@ const createUser = async (req, res) => {
       });
     }
 
-    // if the password and confirm password do not match
-    
-
     const randomSalt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, randomSalt);
 
     const newUser = new userModel({
-      firstName: firstName,
-      lastName: lastName,
-      userName: userName,
-      email: email,
-      phoneNumber: phoneNumber,
+      userName,
+      phoneNumber,
       password: hashedPassword,
-      
     });
 
     await newUser.save();
@@ -69,6 +116,16 @@ const createUser = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
+
+    // Handle duplicate email or phone number error
+    if (error.code === 11000) {
+      const key = Object.keys(error.keyPattern)[0]; // Identify the field causing the duplicate key error
+      return res.status(400).json({
+        success: false,
+        message: `Duplicate value for ${key}`,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Internal Server Error!",
@@ -79,9 +136,9 @@ const createUser = async (req, res) => {
 const loginUser = async (req, res) => {
   console.log(req.body);
 
-  const { email, password } = req.body;
+  const { phoneNumber, password } = req.body;
 
-  if (!email || !password) {
+  if (!phoneNumber || !password) {
       return res.status(400).json({
           success: false,
           message: 'Please enter all the fields'
@@ -89,12 +146,12 @@ const loginUser = async (req, res) => {
   }
 
   try {
-      const user = await userModel.findOne({ email: email });
+      const user = await userModel.findOne({ phoneNumber: phoneNumber });
 
       if (!user) {
           return res.status(400).json({
               success: false,
-              message: "Email Doesn't Exist !"
+              message: "Phone Number is not registered  !"
           });
       }
 

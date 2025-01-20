@@ -5,7 +5,7 @@ const { authGuard, adminGuard } = require('../middleware/authGuard');
 router.post('/create', productController.createProduct);
 
 // Get all products (protected route with authGuard middleware)
-router.get('/get_all_products', authGuard, productController.getAllProducts);
+router.get('/get_all_products', productController.getAllProducts);
 
 // Get products by category
 router.get('/get_products_by_category/', productController.getProductsByCategory);

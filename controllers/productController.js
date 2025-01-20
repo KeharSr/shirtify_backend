@@ -2,63 +2,7 @@ const path = require("path");
 const productModel = require("../models/productModel");
 const fs = require("fs");
 
-const createProduct = async (req, res) => {
-  console.log(req.body);
-  console.log(req.files);
 
-  const {
-    productName,
-    productPrice,
-    productCategory,
-    productDescription,
-    productQuantity,
-  } = req.body;
-
-  if (
-    (!productName || !productPrice || !productCategory || !productDescription,
-    !productQuantity)
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "Please enter all details!",
-    });
-  }
-  var imageName = null;
-
-  try {
-    if (req.files && req.files.productImage) {
-      const { productImage } = req.files;
-      imageName = `${Date.now()}_${productImage.name}`;
-      const imagePath = path.join(__dirname, `../public/products/${imageName}`);
-      await productImage.mv(imagePath);
-    }
-
-    const newProduct = new productModel({
-      productName: productName,
-      productPrice: productPrice,
-      productCategory: productCategory,
-      productDescription: productDescription,
-      productImage: imageName,
-      productQuantity: productQuantity,
-
-      // Save the path of the image
-    });
-
-    await newProduct.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Product Created Successfully!",
-      product: newProduct,
-    });
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({
-      success: false,
-      message: "Internal Server Error!",
-    });
-  }
-};
 
 //delete product
 const deleteProduct = async (req, res) => {
@@ -74,6 +18,144 @@ const deleteProduct = async (req, res) => {
       success: false,
       message: "Internal server error",
       error: error,
+    });
+  }
+};
+
+const createProduct = async (req, res) => {
+  try {
+    const {
+      productName,
+      productPrice,
+      productCategory,
+      productDescription,
+      productQuantity,
+      productSize,
+      productColor,
+    } = req.body;
+
+    // Validation
+    if (!productName?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product name is required!" });
+    }
+    // product price is required and cant be in negative
+    if (!productPrice) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product price is required!" });
+    }
+
+    if (productPrice < 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product price cannot be negative!" });
+    }
+
+
+    if (!productCategory?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product category is required!" });
+    }
+    if (!productDescription?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product description is required!" });
+    }
+    if (!productQuantity) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product quantity is required!" });
+    }
+
+    // product quantity cant be negative
+    if (productQuantity < 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Product quantity cannot be negative!" });
+    }
+
+
+
+    // Parse the JSON strings back into arrays
+    let productSizes = [];
+    let productColors = [];
+
+    try {
+      productSizes = JSON.parse(productSize || "[]");
+      productColors = JSON.parse(productColor || "[]");
+    } catch (error) {
+      console.error("Error parsing sizes or colors:", error);
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid size or color format!" });
+    }
+
+    if (!productSizes.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product size is required!",
+      });
+    }
+    if (!productColors.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product color is required!",
+      });
+    }
+
+    const imageNames = [];
+
+    // Handle image uploads
+    if (req.files && req.files.productImage) {
+      const { productImage } = req.files;
+      const images = Array.isArray(productImage)
+        ? productImage
+        : [productImage];
+
+      for (const image of images) {
+        const imageName = `${Date.now()}_${image.name}`;
+        const imagePath = path.join(
+          __dirname,
+          `../public/products/${imageName}`
+        );
+        await image.mv(imagePath);
+        imageNames.push(imageName);
+      }
+    }
+
+    if (!imageNames.length) {
+      return res.status(400).json({
+        success: false,
+        message: "At least one product image is required!",
+      });
+    }
+
+    const newProduct = new productModel({
+      productName,
+      productPrice,
+      productCategory,
+      productDescription,
+      productImage: imageNames,
+      productQuantity,
+      productSize: productSizes,
+      productColor: productColors,
+    });
+
+    await newProduct.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Product Created Successfully!",
+      product: newProduct,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error!",
     });
   }
 };
@@ -126,65 +208,233 @@ const getAllProducts = async (req, res) => {
   }
 };
 
-// update product
 const updateProduct = async (req, res) => {
   try {
-    // if there is image
-    if (req.files && req.files.productImage) {
-      //destructing
-      const { productImage } = req.files;
+    const {
+      productName,
+      productPrice,
+      productCategory,
+      productDescription,
+      productQuantity,
+      productSize,
+      productColor,
+    } = req.body;
 
-      //upload image to directory(/public/products folder)
-      const imageName = `${Date.now()}-${productImage.name}`;
+    // Find existing product
+    const existingProduct = await productModel.findById(req.params.id);
+    if (!existingProduct) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found!",
+      });
+    }
 
-      //2. make an upload path (/path/upload- directory)
-      const imageUploadPath = path.join(
-        __dirname,
-        `../public/products/${imageName}`
-      );
+    // Validate required fields if they are being updated
+    if (productName !== undefined && !productName?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product name cannot be empty!",
+      });
+    }
+    if (productPrice !== undefined && !productPrice) {
+      return res.status(400).json({
+        success: false,
+        message: "Product price cannot be empty!",
+      });
+    }
 
-      //move the folder
-      await productImage.mv(imageUploadPath);
+    if (productPrice !== undefined && productPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Product price cannot be negative!",
+      });
+    }
 
-      //req.params(id), rq.body(updated data +pn,pp,pc,pd), req.files(image)
-      //add new field to the req.body(productImage->imageName)
-      req.body.productImage = imageName; //image uploaded (generated name)
+    if (productCategory !== undefined && !productCategory?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product category cannot be empty!",
+      });
+    }
+    if (productDescription !== undefined && !productDescription?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Product description cannot be empty!",
+      });
+    }
+    if (productQuantity !== undefined && !productQuantity) {
+      return res.status(400).json({
+        success: false,
+        message: "Product quantity cannot be empty!",
+      });
+    }
 
-      // if image is uploaded, and req.body is assigned
-      if (req.body.productImage) {
-        //find the product
-        const existingProduct = await productModel.findById(req.params.id);
+    // Parse and validate sizes and colors if they are being updated
+    let productSizes = existingProduct.productSize;
+    let productColors = existingProduct.productColor;
 
-        //Searching in the directory folder
-        const oldImagePath = path.join(
-          __dirname,
-          `../public/products/${existingProduct.productImage}`
-        );
-
-        // delete from file system
-        fs.unlinkSync(oldImagePath);
+    if (productSize !== undefined) {
+      try {
+        productSizes = JSON.parse(productSize || "[]");
+        if (!productSizes.length) {
+          return res.status(400).json({
+            success: false,
+            message: "At least one product size is required!",
+          });
+        }
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid size format!",
+        });
       }
     }
-    //update the data
-    const updateProduct = await productModel.findByIdAndUpdate(
+
+    if (productColor !== undefined) {
+      try {
+        productColors = JSON.parse(productColor || "[]");
+        if (!productColors.length) {
+          return res.status(400).json({
+            success: false,
+            message: "At least one product color is required!",
+          });
+        }
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid color format!",
+        });
+      }
+    }
+
+    // Handle image updates if new images are provided
+    let imageNames = existingProduct.productImage;
+
+    if (req.files && req.files.productImage) {
+      const { productImage } = req.files;
+      const newImages = Array.isArray(productImage)
+        ? productImage
+        : [productImage];
+
+      // Delete existing images
+      for (const oldImage of existingProduct.productImage) {
+        const oldImagePath = path.join(
+          __dirname,
+          `../public/products/${oldImage}`
+        );
+        if (fs.existsSync(oldImagePath)) {
+          fs.unlinkSync(oldImagePath);
+        }
+      }
+
+      // Upload new images
+      imageNames = [];
+      for (const image of newImages) {
+        const imageName = `${Date.now()}_${image.name}`;
+        const imagePath = path.join(
+          __dirname,
+          `../public/products/${imageName}`
+        );
+        await image.mv(imagePath);
+        imageNames.push(imageName);
+      }
+
+      if (!imageNames.length) {
+        return res.status(400).json({
+          success: false,
+          message: "At least one product image is required!",
+        });
+      }
+    }
+
+    // Update the product
+    const updatedProduct = await productModel.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      {
+        ...(productName && { productName }),
+        ...(productPrice && { productPrice }),
+        ...(productCategory && { productCategory }),
+        ...(productDescription && { productDescription }),
+        ...(productQuantity && { productQuantity }),
+        productSize: productSizes,
+        productColor: productColors,
+        productImage: imageNames,
+      },
       { new: true }
     );
+
     res.status(200).json({
       success: true,
-      message: "Product updated successfully",
-      data: updateProduct,
+      message: "Product updated successfully!",
+      product: updatedProduct,
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error,
+      message: "Internal server error!",
+      error: error.message,
     });
   }
 };
+
+// update product
+// const updateProduct = async (req, res) => {
+//   try {
+//     // if there is image
+//     if (req.files && req.files.productImage) {
+//       //destructing
+//       const { productImage } = req.files;
+
+//       //upload image to directory(/public/products folder)
+//       const imageName = `${Date.now()}-${productImage.name}`;
+
+//       //2. make an upload path (/path/upload- directory)
+//       const imageUploadPath = path.join(
+//         __dirname,
+//         `../public/products/${imageName}`
+//       );
+
+//       //move the folder
+//       await productImage.mv(imageUploadPath);
+
+//       req.body.productImage = imageName; //image uploaded (generated name)
+
+//       // if image is uploaded, and req.body is assigned
+//       if (req.body.productImage) {
+//         //find the product
+//         const existingProduct = await productModel.findById(req.params.id);
+
+//         //Searching in the directory folder
+//         const oldImagePath = path.join(
+//           __dirname,
+//           `../public/products/${existingProduct.productImage}`
+//         );
+
+//         // delete from file system
+//         fs.unlinkSync(oldImagePath);
+//       }
+//     }
+//     //update the data
+//     const updateProduct = await productModel.findByIdAndUpdate(
+//       req.params.id,
+//       req.body,
+//       { new: true }
+//     );
+//     res.status(200).json({
+//       success: true,
+//       message: "Product updated successfully",
+//       data: updateProduct,
+//     });
+//   } catch (error) {
+//     console.log(error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Internal server error",
+//       error: error,
+//     });
+//   }
+// };
 
 const paginatonProducts = async (req, res) => {
   // results  page number
@@ -229,7 +479,7 @@ const paginatonProducts = async (req, res) => {
 const getProductsByCategory = async (req, res) => {
   const category = req.query.category || "All";
   const search = req.query.search || "";
-  
+
   console.log(category);
 
   const pageNo = parseInt(req.query.page || 1);
@@ -322,13 +572,12 @@ const searchProductsByName = async (req, res) => {
 };
 
 module.exports = {
-    createProduct,
-    deleteProduct,
-    getSingleProduct,
-    getAllProducts,
-    updateProduct,
-    paginatonProducts,
-    getProductsByCategory,
-    searchProductsByName,
-    
-    };
+  createProduct,
+  deleteProduct,
+  getSingleProduct,
+  getAllProducts,
+  updateProduct,
+  paginatonProducts,
+  getProductsByCategory,
+  searchProductsByName,
+};
